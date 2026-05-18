@@ -87,7 +87,13 @@ cd ESP32_U8g2
 
 ### 2. 修改配置
 
-编辑 [src/config.h](src/config.h)，替换为你自己的 WiFi 和 MQTT 信息：
+复制配置模板并填入你自己的信息：
+
+```bash
+cp src/config.example.h src/config.h
+```
+
+编辑 [src/config.h](src/config.h)，替换 WiFi 和 MQTT 信息：
 
 ```cpp
 // WiFi 配置
@@ -95,7 +101,7 @@ cd ESP32_U8g2
 #define WIFI_PASSWORD "你的WiFi密码"
 
 // MQTT 配置
-#define MQTT_SERVER "你的MQTT服务器IP"
+#define MQTT_SERVER "你的MQTT服务器地址"
 #define MQTT_PORT   1883
 #define MQTT_USER   "你的MQTT用户名"
 #define MQTT_PASS   "你的MQTT密码"
@@ -123,7 +129,8 @@ pio device monitor
 
 ```
 src/
-├── config.h          # 引脚、WiFi、MQTT、API 等配置
+├── config.example.h  # 配置模板（无敏感信息，可安全提交）
+├── config.h          # 本地配置（已 gitignore，需自行创建）
 ├── globals.h/.cpp    # 全局变量与对象
 ├── main.cpp          # 主程序入口与主循环
 ├── display.h/.cpp    # OLED 显示逻辑（双页切换、开机动画）
@@ -148,9 +155,8 @@ src/
 
 ## 安全提示
 
-> **注意**：`src/config.h` 中包含明文的 WiFi 密码和 MQTT 凭据。  
-> 请在提交代码前确保已替换为自己的配置，避免泄露敏感信息。  
-> 建议将 `config.h` 加入 `.gitignore`，改用 `config.example.h` 作为模板。
+> `src/config.h` 已被 `.gitignore` 排除，不会提交到仓库。  
+> 本地需要自行创建 `config.h`（可从 `config.example.h` 复制），填入真实的 WiFi 和 MQTT 凭据。
 
 ## 许可证
 

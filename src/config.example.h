@@ -1,14 +1,14 @@
 #pragma once
 
 // ==================== WiFi ====================
-#define WIFI_SSID     "旭的iPhone Air"
-#define WIFI_PASSWORD "123456789"
+#define WIFI_SSID     "你的WiFi名称"
+#define WIFI_PASSWORD "你的WiFi密码"
 
 // ==================== MQTT ====================
-#define MQTT_SERVER "123.207.45.73"
+#define MQTT_SERVER "你的MQTT服务器地址"
 #define MQTT_PORT   1883
-#define MQTT_USER   "admin"
-#define MQTT_PASS   "Lu20050910"
+#define MQTT_USER   "你的MQTT用户名"
+#define MQTT_PASS   "你的MQTT密码"
 
 // MQTT 主题
 #define TOPIC_REQ_SENSOR   "esp32/req/sensor"

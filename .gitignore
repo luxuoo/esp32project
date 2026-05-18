@@ -13,3 +13,6 @@
 include/README
 lib/README
 test/README
+
+# 敏感配置文件（使用 config.example.h 作为模板）
+src/config.h
