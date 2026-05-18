@@ -7,6 +7,13 @@
 #include <DHT.h>
 #include <Wire.h>
 
+// ==================== 前向声明 ====================
+void startD6Blink(int times);
+void drawPage2();
+void drawRunner(int cx, int cy, int frame);
+void playBootAnimation();
+
+// ==================== 引脚与网络 ====================
 const char* ssid       = "旭的iPhone Air";
 const char* password   = "123456789";
 const char* mqtt_server = "123.207.45.73";
@@ -14,11 +21,11 @@ const int   mqtt_port   = 1883;
 const char* mqtt_user   = "admin";
 const char* mqtt_pass   = "Lu20050910";
 
-const int D3  = 14;   
-const int D4  = 27;   
-const int D5  = 26;   
-const int D6  = 33;   
-const int SW1 = 32;   
+const int D3  = 14;
+const int D4  = 27;
+const int D5  = 26;
+const int D6  = 33;
+const int SW1 = 32;
 
 const int OLED_SDA = 21;
 const int OLED_SCL = 22;
@@ -36,13 +43,12 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 WiFiClientSecure secureClient;
 
-
 const char* WEATHER_API_URL =
   "https://api.open-meteo.com/v1/forecast"
   "?latitude=39.9042&longitude=116.4074"
   "&current_weather=true&timezone=Asia/Shanghai";
 
-
+// ==================== 全局状态 ====================
 int currentPage   = 1;
 int d5_brightness = 0;
 float temp = 0.0, hum = 0.0;
@@ -73,11 +79,10 @@ unsigned long lastD6BlinkTime = 0;
 unsigned long lastButtonPress = 0;
 const unsigned long DEBOUNCE_MS = 200;
 
-// 连接状态追踪
 bool wifi_was_connected = false;
 bool mqtt_was_connected = false;
 
-
+// ==================== 中断 ====================
 void IRAM_ATTR buttonISR() {
   flag_button_refresh = true;
 }
@@ -85,7 +90,7 @@ void IRAM_ATTR timerISR() {
   flag_timer_read = true;
 }
 
-
+// ==================== weathercode → 中文 ====================
 String weathercodeToString(int code) {
   if (code == 0)                return "晴朗";
   if (code == 1)                return "少云";
@@ -100,7 +105,7 @@ String weathercodeToString(int code) {
   return "未知";
 }
 
-
+// ==================== D6 非阻塞闪烁 ====================
 void startD6Blink(int times) {
   d6_blink_remaining = times * 2;
   d6_blinking = true;
@@ -120,7 +125,7 @@ void updateD6Blink() {
   }
 }
 
-
+// ==================== 传感器 ====================
 void readSensors() {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
@@ -148,11 +153,94 @@ void publishSensorData() {
   client.publish("esp32/resp/sensor", buf);
 }
 
-//OLED
+// ==================== I2C 扫描 ====================
+void scanI2C() {
+  Serial.println("[I2C] 扫描...");
+  for (byte addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("[I2C] 设备: 0x%02X\n", addr);
+    }
+  }
+}
+
+// ==================== 天气 API ====================
+bool fetchWeatherFromAPI() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Weather] WiFi 未连接");
+    weather_fetch_failed = true;
+    if (currentPage == 2) drawPage2();
+    return false;
+  }
+
+  Serial.println("[Weather] 请求 API...");
+  HTTPClient http;
+  secureClient.setInsecure();
+  http.begin(secureClient, WEATHER_API_URL);
+  http.setTimeout(10000);
+  int httpCode = http.GET();
+
+  if (httpCode != 200) {
+    Serial.printf("[Weather] HTTP 失败: %d\n", httpCode);
+    http.end();
+    weather_fetch_failed = true;
+    startD6Blink(3);
+    if (currentPage == 2) drawPage2();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) {
+    Serial.printf("[Weather] JSON 解析失败: %s\n", err.c_str());
+    weather_fetch_failed = true;
+    startD6Blink(3);
+    if (currentPage == 2) drawPage2();
+    return false;
+  }
+
+  JsonObject cw = doc["current_weather"];
+  if (cw.isNull()) {
+    weather_fetch_failed = true;
+    startD6Blink(3);
+    if (currentPage == 2) drawPage2();
+    return false;
+  }
+
+  float api_temp = cw["temperature"] | 0.0f;
+  int   api_code = cw["weathercode"] | -1;
+
+  weather_city         = "北京";
+  weather_text         = weathercodeToString(api_code);
+  weather_temp_str     = String(api_temp, 1);
+  weather_available    = true;
+  weather_fetch_failed = false;
+
+  Serial.printf("[Weather] %s %s C (code=%d)\n",
+    weather_text.c_str(), weather_temp_str.c_str(), api_code);
+
+  if (client.connected()) {
+    JsonDocument resp;
+    resp["city"]    = weather_city;
+    resp["weather"] = weather_text;
+    resp["temp"]    = weather_temp_str;
+    resp["code"]    = api_code;
+    char buf[256];
+    serializeJson(resp, buf);
+    client.publish("esp32/resp/weather", buf);
+  }
+
+  if (currentPage == 2) drawPage2();
+  return true;
+}
+
+// ==================== OLED 界面 ====================
 void drawPage1() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-
   u8g2.setCursor(0, 12);
   u8g2.print("D5=");
   u8g2.print(d5_brightness);
@@ -202,92 +290,120 @@ void refreshCurrentPage() {
   else                  drawPage2();
 }
 
-void scanI2C() {
-  Serial.println("[I2C] 扫描...");
-  for (byte addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      Serial.printf("[I2C] 设备: 0x%02X\n", addr);
+// ==================== 走路小人绘制 ====================
+// cx, cy = 小人脚底中心坐标
+// frame  = 当前帧 (0~3 循环)
+void drawRunner(int cx, int cy, int frame) {
+  int bounce = (frame == 1 || frame == 3) ? -1 : 0;
+  cy += bounce;
+
+  // 头
+  u8g2.drawDisc(cx, cy - 23, 3);
+
+  // 身体
+  u8g2.drawLine(cx, cy - 20, cx, cy - 8);
+
+  // 手臂
+  switch (frame % 4) {
+    case 0:
+      u8g2.drawLine(cx, cy - 17, cx - 5, cy - 12);
+      u8g2.drawLine(cx, cy - 17, cx + 5, cy - 12);
+      break;
+    case 1:
+      u8g2.drawLine(cx, cy - 17, cx + 9, cy - 13);
+      u8g2.drawLine(cx, cy - 17, cx - 6, cy - 11);
+      break;
+    case 2:
+      u8g2.drawLine(cx, cy - 17, cx - 4, cy - 12);
+      u8g2.drawLine(cx, cy - 17, cx + 4, cy - 12);
+      break;
+    case 3:
+      u8g2.drawLine(cx, cy - 17, cx - 9, cy - 13);
+      u8g2.drawLine(cx, cy - 17, cx + 6, cy - 11);
+      break;
+  }
+
+  // 腿
+  switch (frame % 4) {
+    case 0:
+      u8g2.drawLine(cx, cy - 8, cx - 3, cy);
+      u8g2.drawLine(cx, cy - 8, cx + 3, cy);
+      break;
+    case 1:
+      u8g2.drawLine(cx, cy - 8, cx + 9, cy);
+      u8g2.drawLine(cx, cy - 8, cx - 6, cy - 3);
+      break;
+    case 2:
+      u8g2.drawLine(cx, cy - 8, cx - 2, cy);
+      u8g2.drawLine(cx, cy - 8, cx + 2, cy);
+      break;
+    case 3:
+      u8g2.drawLine(cx, cy - 8, cx - 9, cy);
+      u8g2.drawLine(cx, cy - 8, cx + 6, cy - 3);
+      break;
+  }
+
+  // 脚
+  if (frame == 0 || frame == 2) {
+    u8g2.drawPixel(cx - 4, cy + 1);
+    u8g2.drawPixel(cx + 4, cy + 1);
+  }
+}
+
+// ==================== 开机动画主函数 ====================
+void playBootAnimation() {
+  unsigned long startTime = millis();
+
+  while (millis() - startTime < 3000) {
+    unsigned long elapsed = millis() - startTime;
+    int progress = map(elapsed, 0, 3000, 0, 100);
+    int frame    = (elapsed / 120) % 4;
+
+    u8g2.clearBuffer();
+
+    // 标题
+    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+    u8g2.setCursor(28, 10);
+    u8g2.print("24 LuXuXu");
+    u8g2.drawHLine(0, 13, 128);
+
+    // 速度线
+    int dashOff = (elapsed / 40) % 10;
+    for (int i = 0; i < 3; i++) {
+      int lx = 18 - dashOff - i * 7;
+      if (lx > 2 && lx < 32) {
+        u8g2.drawHLine(lx, 24 + i * 6, 6);
+      }
     }
+
+    // 走路小人
+    drawRunner(55, 42, frame);
+
+    // 地面虚线（向左滚动）
+    int gndOff = (elapsed / 40) % 16;
+    for (int x = -gndOff; x < 128; x += 16) {
+      u8g2.drawHLine(x, 44, 8);
+    }
+
+    // 进度条
+    u8g2.drawFrame(14, 49, 100, 10);
+    int barW = map(progress, 0, 100, 0, 98);
+    if (barW > 0) {
+      u8g2.drawBox(15, 50, barW, 8);
+    }
+
+    // 百分比
+    u8g2.setCursor(54, 63);
+    u8g2.print(progress);
+    u8g2.print("%");
+
+    u8g2.sendBuffer();
   }
 }
 
-
-bool fetchWeatherFromAPI() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Weather] WiFi 未连接");
-    weather_fetch_failed = true;
-    if (currentPage == 2) drawPage2();
-    return false;
-  }
-
-  Serial.println("[Weather] 请求 API...");
-  HTTPClient http;
-  secureClient.setInsecure();
-  http.begin(secureClient, WEATHER_API_URL);
-  http.setTimeout(10000);
-  int httpCode = http.GET();
-
-  if (httpCode != 200) {
-    Serial.printf("[Weather] HTTP 失败: %d\n", httpCode);
-    http.end();
-    weather_fetch_failed = true;
-    startD6Blink(3);       
-    if (currentPage == 2) drawPage2();
-    return false;
-  }
-
-  String payload = http.getString();
-  http.end();
-
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, payload);
-  if (err) {
-    Serial.printf("[Weather] JSON 解析失败: %s\n", err.c_str());
-    weather_fetch_failed = true;
-    startD6Blink(3);
-    if (currentPage == 2) drawPage2();
-    return false;
-  }
-
-  JsonObject cw = doc["current_weather"];
-  if (cw.isNull()) {
-    weather_fetch_failed = true;
-    startD6Blink(3);
-    if (currentPage == 2) drawPage2();
-    return false;
-  }
-
-  float api_temp = cw["temperature"] | 0.0f;
-  int   api_code = cw["weathercode"] | -1;
-
-  weather_city         = "北京";
-  weather_text         = weathercodeToString(api_code);
-  weather_temp_str     = String(api_temp, 1);
-  weather_available    = true;
-  weather_fetch_failed = false;
-
-  Serial.printf("[Weather] %s %s C (code=%d)\n",
-    weather_text.c_str(), weather_temp_str.c_str(), api_code);
-
-  // 回传 MQTT
-  if (client.connected()) {
-    JsonDocument resp;
-    resp["city"]    = weather_city;
-    resp["weather"] = weather_text;
-    resp["temp"]    = weather_temp_str;
-    resp["code"]    = api_code;
-    char buf[256];
-    serializeJson(resp, buf);
-    client.publish("esp32/resp/weather", buf);
-  }
-
-  if (currentPage == 2) drawPage2();
-  return true;
-}
-
+// ==================== 按钮处理（需求6）====================
 void handleButtonRefresh() {
-  Serial.println("[BTN] 手动刷新所有页面数据");
+  Serial.println("[BTN] 手动刷新所有数据");
 
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
@@ -295,47 +411,37 @@ void handleButtonRefresh() {
   u8g2.print("正在刷新数据...");
   u8g2.sendBuffer();
 
-
   readSensors();
-
- 
   fetchWeatherFromAPI();
-
- 
   refreshCurrentPage();
 
- 
   if (client.connected()) {
     client.publish("esp32/req/manual", "手动刷新成功");
     Serial.println("[MQTT] 发布: 手动刷新成功");
   }
 }
 
-//MQTT 回调
+// ==================== MQTT 回调 ====================
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String topicStr = String(topic);
   String msg = "";
   for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
   Serial.printf("[MQTT] %s -> %s\n", topic, msg.c_str());
 
-  // 需求3: 传感器请求 → 第1页
   if (topicStr == "esp32/req/sensor") {
     readSensors();
     currentPage = 1;
     drawPage1();
     publishSensorData();
   }
-  
   else if (topicStr == "esp32/req/weather") {
     String requestedCity = msg;
     if (requestedCity.length() == 0) requestedCity = "北京";
     Serial.printf("[Weather] 请求城市: %s\n", requestedCity.c_str());
-
     currentPage = 2;
-    drawPage2();             
-    fetchWeatherFromAPI();   
+    drawPage2();
+    fetchWeatherFromAPI();
   }
-  // LED 控制
   else if (topicStr == "esp32/ctrl/led") {
     if (msg == "LED_ON")             { ledcWrite(2, 255); d5_brightness = 100; }
     else if (msg == "LED_BRIGHT_50") { ledcWrite(2, 127); d5_brightness = 50;  }
@@ -344,6 +450,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+// ==================== SETUP ====================
 void setup() {
   Serial.begin(115200);
   Serial.println("\n========== ESP32 启动 ==========");
@@ -370,41 +477,26 @@ void setup() {
   u8g2.begin();
   u8g2.enableUTF8Print();
 
-  unsigned long startAnim = millis();
-  while (millis() - startAnim < 3000) {
-    int progress = map(millis() - startAnim, 0, 3000, 0, 100);
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-    u8g2.setCursor(30, 20);
-    u8g2.print("24 LuXuXu");
-    u8g2.drawFrame(14, 40, 100, 10);
-    u8g2.drawBox(15, 41, map(progress, 0, 100, 0, 98), 8);
-    u8g2.setCursor(50, 58);
-    u8g2.print(progress);
-    u8g2.print("%");
-    u8g2.sendBuffer();
-    delay(50);
-  }
+  // ========== 需求9: 走路小人开机动画 3秒 ==========
+  playBootAnimation();
 
- 
+  // ========== 需求1+9: WiFi 连接 + 实时进度 ==========
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
 
-  unsigned long wifiStart = millis();
+  unsigned long wifiStart    = millis();
   unsigned long lastD3Toggle = 0;
-  unsigned long lastOledUpdate = 0;
+  unsigned long lastOledUp   = 0;
   int dotAnim = 0;
 
   while (WiFi.status() != WL_CONNECTED) {
-    // D3 0.5s 周期闪烁
     if (millis() - lastD3Toggle >= 250) {
       digitalWrite(D3, !digitalRead(D3));
       lastD3Toggle = millis();
     }
-    // OLED 每 500ms 更新一次
-    if (millis() - lastOledUpdate >= 500) {
-      lastOledUpdate = millis();
+    if (millis() - lastOledUp >= 500) {
+      lastOledUp = millis();
       dotAnim = (dotAnim + 1) % 4;
       int elapsed = (millis() - wifiStart) / 1000;
       int pct = constrain((int)(millis() - wifiStart) * 100 / 30000, 0, 100);
@@ -423,16 +515,16 @@ void setup() {
       u8g2.sendBuffer();
     }
     if (millis() - wifiStart > 30000) {
-      Serial.println("[WiFi] 连接超时");
+      Serial.println("[WiFi] 超时");
       break;
     }
     delay(10);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    digitalWrite(D3, HIGH);  
+    digitalWrite(D3, HIGH);
     wifi_was_connected = true;
-    Serial.printf("[WiFi] 已连接 IP=%s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("[WiFi] IP=%s\n", WiFi.localIP().toString().c_str());
 
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_wqy12_t_gb2312);
@@ -443,6 +535,7 @@ void setup() {
     delay(1500);
   }
 
+  // ========== 需求2+9: MQTT 连接 + 实时进度 ==========
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(mqttCallback);
 
@@ -452,12 +545,10 @@ void setup() {
   int mqttDotAnim = 0;
 
   while (!client.connected() && mqttRetry < 10) {
-    // D4 0.3s 周期闪烁
     if (millis() - lastD4Toggle >= 150) {
       digitalWrite(D4, !digitalRead(D4));
       lastD4Toggle = millis();
     }
-    // OLED 每 500ms 更新
     if (millis() - lastMqttOled >= 500) {
       lastMqttOled = millis();
       mqttDotAnim = (mqttDotAnim + 1) % 4;
@@ -479,7 +570,7 @@ void setup() {
 
     String clientId = "ESP32Client-" + String(random(0xffff), HEX);
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
-      digitalWrite(D4, HIGH);  // 需求2: 连接成功常亮
+      digitalWrite(D4, HIGH);
       mqtt_was_connected = true;
       client.subscribe("esp32/req/sensor");
       client.subscribe("esp32/req/weather");
@@ -501,6 +592,7 @@ void setup() {
     delay(1000);
   }
 
+  // 首次获取天气
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
   u8g2.setCursor(0, 30); u8g2.print("获取天气中...");
@@ -508,42 +600,40 @@ void setup() {
   fetchWeatherFromAPI();
   lastWeatherFetch = millis();
 
+  // 进入第一页
   currentPage = 1;
   readSensors();
   drawPage1();
   Serial.println("========== 初始化完成 ==========\n");
 }
 
+// ==================== LOOP ====================
 unsigned long lastWifiCheck = 0;
 unsigned long lastMqttCheck = 0;
 
 void loop() {
-  //  wifi d3
+  // 需求1: WiFi D3
   bool wifiOK = (WiFi.status() == WL_CONNECTED);
 
   if (wifiOK) {
     if (!wifi_was_connected) {
-      
       digitalWrite(D3, HIGH);
       wifi_was_connected = true;
       Serial.println("[WiFi] 重连成功");
     }
   } else {
     if (wifi_was_connected) {
-      
       digitalWrite(D3, LOW);
       wifi_was_connected = false;
-      Serial.println("[WiFi] 断开，自动重连中...");
+      Serial.println("[WiFi] 断开");
     }
-    // 0.5s 周期闪烁
     if (millis() - lastWifiCheck > 250) {
       digitalWrite(D3, !digitalRead(D3));
       lastWifiCheck = millis();
     }
-    
   }
 
-  // mqtt d4
+  // 需求2: MQTT D4
   bool mqttOK = client.connected() && wifiOK;
 
   if (mqttOK) {
@@ -558,18 +648,15 @@ void loop() {
     client.loop();
   } else {
     if (mqtt_was_connected) {
-     
       digitalWrite(D4, LOW);
       mqtt_was_connected = false;
       Serial.println("[MQTT] 断开");
     }
     if (wifiOK) {
-      
       if (millis() - lastMqttCheck > 150) {
         digitalWrite(D4, !digitalRead(D4));
         lastMqttCheck = millis();
       }
-      // 每 5 秒重试
       if (millis() - lastMqttReconnectAttempt > MQTT_RECONNECT_INTERVAL) {
         lastMqttReconnectAttempt = millis();
         String clientId = "ESP32Client-" + String(random(0xffff), HEX);
@@ -580,7 +667,7 @@ void loop() {
     }
   }
 
-  // 按钮手动刷新
+  // 需求6: 按钮手动刷新
   if (flag_button_refresh) {
     flag_button_refresh = false;
     if (millis() - lastButtonPress > DEBOUNCE_MS) {
@@ -589,7 +676,7 @@ void loop() {
     }
   }
 
-  // 定时器 5 
+  // 需求7: 定时器 5 秒
   if (flag_timer_read) {
     flag_timer_read = false;
     readSensors();
@@ -597,7 +684,7 @@ void loop() {
     publishSensorData();
   }
 
-  // 天气自动更新（10分钟）
+  // 天气定时 10 分钟
   if (millis() - lastWeatherFetch > WEATHER_INTERVAL) {
     lastWeatherFetch = millis();
     fetchWeatherFromAPI();
