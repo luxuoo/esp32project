@@ -8,7 +8,7 @@
 - **OLED 双页显示**：
   - 第 1 页：LED 亮度、温度、湿度、光照值
   - 第 2 页：城市、天气状况（中文）、气温（来自 Open-Meteo API）
-- **开机动画**：走路小人 + 进度条动画效果
+- **开机动画**：支持自定义 GIF 动画（LittleFS），未配置时使用默认走路小人动画
 - **MQTT 远程控制**：支持远程读取传感器数据、获取天气、控制 LED 亮度
 - **手动刷新**：按下按钮即可立即刷新全部数据
 - **状态指示灯**：4 颗 LED 分别指示 WiFi / MQTT 连接状态、错误通知
@@ -75,6 +75,7 @@
 | [ArduinoJson](https://github.com/bblanchon/ArduinoJson) | ^7.2.2 | JSON 序列化/反序列化 |
 | [PubSubClient](https://github.com/knolleary/pubsubclient) | ^2.8 | MQTT 客户端 |
 | [DHT sensor library](https://github.com/adafruit/DHT-sensor-library) | ^1.4.7 | DHT11 温湿度传感器驱动 |
+| [AnimatedGIF](https://github.com/bitbank2/AnimatedGIF) | ^2.2.2 | GIF 动画解码（开机动画） |
 
 ## 快速开始
 
@@ -125,15 +126,39 @@ pio run --target upload
 pio device monitor
 ```
 
+### 5. 自定义 GIF 开机动画（可选）
+
+将你的 GIF 文件命名为 `boot.gif`，放入 `data/` 目录，然后烧录到 LittleFS：
+
+```bash
+# 烧录 LittleFS 文件系统（将 data/ 目录内容写入 ESP32）
+pio run --target uploadfs
+```
+
+**GIF 要求**：
+- 建议尺寸：128×64 像素（或更小，居中显示）
+- 格式：标准 GIF87a/GIF89a，支持动画
+- 颜色：支持彩色，自动按亮度转为黑白（阈值 128）
+- 支持透明色，透明区域显示为黑色背景
+- 文件不宜过大，建议 < 200KB（LittleFS 可用空间约 896KB）
+- 如果不放 `boot.gif`，自动使用默认的走路小人动画
+
+播放参数可在 [src/main.cpp](src/main.cpp) 中调整：
+- 时长（默认 4000ms）、倍速（默认 3.5x）
+
 ## 项目结构
 
 ```
+data/
+└── boot.gif          # 开机动画 GIF 文件（可选，烧录到 LittleFS）
+
 src/
 ├── config.example.h  # 配置模板（无敏感信息，可安全提交）
 ├── config.h          # 本地配置（已 gitignore，需自行创建）
 ├── globals.h/.cpp    # 全局变量与对象
 ├── main.cpp          # 主程序入口与主循环
-├── display.h/.cpp    # OLED 显示逻辑（双页切换、开机动画）
+├── display.h/.cpp    # OLED 显示逻辑（双页切换、走路小人动画）
+├── gif_player.h/.cpp # LittleFS + AnimatedGIF 开机动画播放
 ├── sensors.h/.cpp    # DHT11 + 光敏传感器读取
 ├── weather.h/.cpp    # Open-Meteo 天气 API 请求与解析
 ├── mqtt_handler.h/.cpp  # MQTT 连接、订阅、消息处理

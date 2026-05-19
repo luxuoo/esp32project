@@ -5,6 +5,7 @@
 #include "weather.h"
 #include "mqtt_handler.h"
 #include "d6_blink.h"
+#include "gif_player.h"
 
 // ==================== 中断（必须在 main 中，IRAM_ATTR）====================
 void IRAM_ATTR buttonISR() {
@@ -30,6 +31,10 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n========== ESP32 启动 ==========");
 
+  // 启动阶段关闭看门狗，防止 GIF 解码等耗时操作触发重启
+  disableCore0WDT();
+  disableLoopWDT();
+
   pinMode(PIN_D3, OUTPUT); pinMode(PIN_D4, OUTPUT); pinMode(PIN_D6, OUTPUT);
   pinMode(PIN_SW1, INPUT_PULLUP);
 
@@ -52,8 +57,14 @@ void setup() {
   u8g2.begin();
   u8g2.enableUTF8Print();
 
-  // 走路小人开机动画 3 秒
-  playBootAnimation();
+  // 初始化 LittleFS 并播放 GIF 开机动画
+  initLittleFS();
+  timerAlarmDisable(timer);   // 播放 GIF 期间禁用定时器中断
+  // 2.5 倍速播放 4 秒，足够进度条走完一圈
+  if (!playGifBoot(u8g2, 4000, 3.5f)) {
+    playBootAnimation();
+  }
+  timerAlarmEnable(timer);    // 恢复定时器中断
 
   // WiFi 连接
   WiFi.mode(WIFI_STA);
