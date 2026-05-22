@@ -27,6 +27,7 @@ extern bool  sensor_error;
 extern String weather_city;
 extern String weather_text;
 extern String weather_temp_str;
+extern int    weather_code;
 extern bool   weather_available;
 extern bool   weather_fetch_failed;
 

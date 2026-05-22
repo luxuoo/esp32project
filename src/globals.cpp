@@ -20,6 +20,7 @@ bool  sensor_error  = false;
 String weather_city         = "北京";
 String weather_text         = "--";
 String weather_temp_str     = "--";
+int    weather_code         = -1;
 bool   weather_available    = false;
 bool   weather_fetch_failed = false;
 

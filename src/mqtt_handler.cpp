@@ -3,14 +3,28 @@
 #include "sensors.h"
 #include "display.h"
 #include "weather.h"
+#include <math.h>
 
 void handleButtonRefresh() {
   Serial.println("[BTN] 手动刷新所有数据");
 
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2.setCursor(0, 30);
-  u8g2.print("正在刷新数据...");
+
+  // 刷新动画: 旋转像素指示器
+  unsigned long t = millis() / 120;
+  for (int i = 0; i < 8; i++) {
+    float angle = (t * 45 + i * 45) * M_PI / 180.0;
+    int px = 64 + (int)(10 * cos(angle));
+    int py = 24 + (int)(10 * sin(angle));
+    if (i <= (t % 8))
+      u8g2.drawDisc(px, py, 1);
+    else
+      u8g2.drawPixel(px, py);
+  }
+  int tw = u8g2.getStrWidth("正在刷新...");
+  u8g2.setCursor(64 - tw / 2, 48);
+  u8g2.print("正在刷新...");
   u8g2.sendBuffer();
 
   readSensors();

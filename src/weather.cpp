@@ -70,6 +70,7 @@ bool fetchWeatherFromAPI() {
   weather_city         = "北京";
   weather_text         = weathercodeToString(api_code);
   weather_temp_str     = String(api_temp, 1);
+  weather_code         = api_code;
   weather_available    = true;
   weather_fetch_failed = false;
 

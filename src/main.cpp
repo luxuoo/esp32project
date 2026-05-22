@@ -6,8 +6,9 @@
 #include "mqtt_handler.h"
 #include "d6_blink.h"
 #include "gif_player.h"
+#include <math.h>
 
-// ==================== 中断（必须在 main 中，IRAM_ATTR）====================
+
 void IRAM_ATTR buttonISR() {
   flag_button_refresh = true;
 }
@@ -15,7 +16,7 @@ void IRAM_ATTR timerISR() {
   flag_timer_read = true;
 }
 
-// ==================== I2C 扫描 ====================
+
 void scanI2C() {
   Serial.println("[I2C] 扫描...");
   for (byte addr = 1; addr < 127; addr++) {
@@ -26,7 +27,7 @@ void scanI2C() {
   }
 }
 
-// ==================== SETUP ====================
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\n========== ESP32 启动 ==========");
@@ -59,14 +60,14 @@ void setup() {
 
   // 初始化 LittleFS 并播放 GIF 开机动画
   initLittleFS();
-  timerAlarmDisable(timer);   // 播放 GIF 期间禁用定时器中断
+  timerAlarmDisable(timer);   
   // 2.5 倍速播放 4 秒，足够进度条走完一圈
   if (!playGifBoot(u8g2, 4000, 3.5f)) {
     playBootAnimation();
   }
-  timerAlarmEnable(timer);    // 恢复定时器中断
+  timerAlarmEnable(timer);    
 
-  // WiFi 连接
+  
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -74,7 +75,6 @@ void setup() {
   unsigned long wifiStart    = millis();
   unsigned long lastD3Toggle = 0;
   unsigned long lastOledUp   = 0;
-  int dotAnim = 0;
 
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastD3Toggle >= 250) {
@@ -83,22 +83,12 @@ void setup() {
     }
     if (millis() - lastOledUp >= 500) {
       lastOledUp = millis();
-      dotAnim = (dotAnim + 1) % 4;
       int elapsed = (millis() - wifiStart) / 1000;
       int pct = constrain((int)(millis() - wifiStart) * 100 / 30000, 0, 100);
-
-      u8g2.clearBuffer();
-      u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-      u8g2.setCursor(0, 12);
-      u8g2.print("WiFi 连接中");
-      for (int i = 0; i < dotAnim; i++) u8g2.print(".");
-      u8g2.setCursor(0, 28);
-      u8g2.print("SSID: "); u8g2.print(WIFI_SSID);
-      u8g2.drawFrame(0, 38, 128, 10);
-      u8g2.drawBox(1, 39, pct * 126 / 100, 8);
-      u8g2.setCursor(0, 60);
-      u8g2.print("耗时: "); u8g2.print(elapsed); u8g2.print("s / 30s");
-      u8g2.sendBuffer();
+      char detailBuf[32], statusBuf[20];
+      snprintf(detailBuf, sizeof(detailBuf), "SSID: %s", WIFI_SSID);
+      snprintf(statusBuf, sizeof(statusBuf), "耗时: %ds / 30s", elapsed);
+      drawConnectingScreen("WiFi 连接中...", detailBuf, statusBuf, pct);
     }
     if (millis() - wifiStart > 30000) {
       Serial.println("[WiFi] 超时");
@@ -112,12 +102,7 @@ void setup() {
     wifi_was_connected = true;
     Serial.printf("[WiFi] IP=%s\n", WiFi.localIP().toString().c_str());
 
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-    u8g2.setCursor(0, 12); u8g2.print("WiFi 已连接!");
-    u8g2.setCursor(0, 30); u8g2.print("IP: "); u8g2.print(WiFi.localIP().toString());
-    u8g2.setCursor(0, 48); u8g2.print("信号: "); u8g2.print(WiFi.RSSI()); u8g2.print(" dBm");
-    u8g2.sendBuffer();
+    drawConnectedScreen("WiFi 已连接", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     delay(1500);
   }
 
@@ -128,7 +113,6 @@ void setup() {
   unsigned long lastD4Toggle = 0;
   unsigned long lastMqttOled = 0;
   int mqttRetry = 0;
-  int mqttDotAnim = 0;
 
   while (!client.connected() && mqttRetry < 10) {
     if (millis() - lastD4Toggle >= 150) {
@@ -137,21 +121,11 @@ void setup() {
     }
     if (millis() - lastMqttOled >= 500) {
       lastMqttOled = millis();
-      mqttDotAnim = (mqttDotAnim + 1) % 4;
       int pct = mqttRetry * 100 / 10;
-
-      u8g2.clearBuffer();
-      u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-      u8g2.setCursor(0, 12);
-      u8g2.print("MQTT 连接中");
-      for (int i = 0; i < mqttDotAnim; i++) u8g2.print(".");
-      u8g2.setCursor(0, 28);
-      u8g2.print("服务器: "); u8g2.print(MQTT_SERVER);
-      u8g2.setCursor(0, 44);
-      u8g2.print("重试: "); u8g2.print(mqttRetry); u8g2.print("/10");
-      u8g2.drawFrame(0, 52, 128, 10);
-      u8g2.drawBox(1, 53, pct * 126 / 100, 8);
-      u8g2.sendBuffer();
+      char detailBuf[24], statusBuf[16];
+      snprintf(detailBuf, sizeof(detailBuf), "重试 %d/10", mqttRetry);
+      snprintf(statusBuf, sizeof(statusBuf), "服务器: %s", MQTT_SERVER);
+      drawConnectingScreen("MQTT 连接中...", detailBuf, statusBuf, pct);
     }
 
     String clientId = "ESP32Client-" + String(random(0xffff), HEX);
@@ -170,18 +144,27 @@ void setup() {
   }
 
   if (client.connected()) {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-    u8g2.setCursor(0, 20); u8g2.print("MQTT 已连接!");
-    u8g2.setCursor(0, 40); u8g2.print("主题已订阅");
-    u8g2.sendBuffer();
+    drawConnectedScreen("MQTT 已连接", MQTT_SERVER, 0);
     delay(1000);
   }
 
   // 首次获取天气
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2.setCursor(0, 30); u8g2.print("获取天气中...");
+  {
+    // 像素加载指示器
+    unsigned long t = millis() / 120;
+    for (int i = 0; i < 8; i++) {
+      float angle = (t * 45 + i * 45) * M_PI / 180.0;
+      int px = 64 + (int)(10 * cos(angle));
+      int py = 24 + (int)(10 * sin(angle));
+      if (i <= (t % 8)) u8g2.drawDisc(px, py, 1);
+      else              u8g2.drawPixel(px, py);
+    }
+    int tw = u8g2.getStrWidth("获取天气中...");
+    u8g2.setCursor(64 - tw / 2, 48);
+    u8g2.print("获取天气中...");
+  }
   u8g2.sendBuffer();
   fetchWeatherFromAPI();
   lastWeatherFetch = millis();
