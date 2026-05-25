@@ -16,6 +16,13 @@ void readSensors() {
     sensor_error = false;
     digitalWrite(PIN_D6, LOW);
   }
+
+  // 光照低于25时打开 D5 D6
+  if (light_level < 25) {
+    ledcWrite(PWM_CHANNEL, 255);
+    d5_brightness = 100;
+    digitalWrite(PIN_D6, HIGH);
+  }
 }
 
 void publishSensorData() {

@@ -5,13 +5,9 @@
 #include "weather.h"
 #include "mqtt_handler.h"
 #include "d6_blink.h"
-#include "gif_player.h"
 #include <math.h>
 
 
-void IRAM_ATTR buttonISR() {
-  flag_button_refresh = true;
-}
 void IRAM_ATTR timerISR() {
   flag_timer_read = true;
 }
@@ -32,7 +28,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n========== ESP32 启动 ==========");
 
-  // 启动阶段关闭看门狗，防止 GIF 解码等耗时操作触发重启
+  // 启动阶段关闭看门狗，防止等耗时操作触发重启
   disableCore0WDT();
   disableLoopWDT();
 
@@ -43,7 +39,6 @@ void setup() {
   ledcAttachPin(PIN_D5, PWM_CHANNEL);
   ledcWrite(PWM_CHANNEL, 0);
 
-  attachInterrupt(digitalPinToInterrupt(PIN_SW1), buttonISR, FALLING);
   timer = timerBegin(2, 80, true);
   timerAttachInterrupt(timer, &timerISR, true);
   timerAlarmWrite(timer, 5000000, true);
@@ -58,14 +53,10 @@ void setup() {
   u8g2.begin();
   u8g2.enableUTF8Print();
 
-  // 初始化 LittleFS 并播放 GIF 开机动画
-  initLittleFS();
-  timerAlarmDisable(timer);   
-  // 2.5 倍速播放 4 秒，足够进度条走完一圈
-  if (!playGifBoot(u8g2, 4000, 3.5f)) {
-    playBootAnimation();
-  }
-  timerAlarmEnable(timer);    
+  // 开机动画
+  timerAlarmDisable(timer);
+  playBootAnimation();
+  timerAlarmEnable(timer);
 
   
   WiFi.mode(WIFI_STA);
@@ -161,9 +152,8 @@ void setup() {
       if (i <= (t % 8)) u8g2.drawDisc(px, py, 1);
       else              u8g2.drawPixel(px, py);
     }
-    int tw = u8g2.getStrWidth("获取天气中...");
-    u8g2.setCursor(64 - tw / 2, 48);
-    u8g2.print("获取天气中...");
+    u8g2.setCursor(20, 44);
+    u8g2.print("正在获取天气中");
   }
   u8g2.sendBuffer();
   fetchWeatherFromAPI();
@@ -236,12 +226,32 @@ void loop() {
     }
   }
 
-  // 按钮手动刷新
-  if (flag_button_refresh) {
-    flag_button_refresh = false;
-    if (millis() - lastButtonPress > DEBOUNCE_MS) {
-      lastButtonPress = millis();
-      handleButtonRefresh();
+  // 按钮: 短按切换页面, 长按(>1秒)刷新数据
+  {
+    static bool btnWasPressed = false;
+    static unsigned long btnPressStart = 0;
+    bool btnPressed = (digitalRead(PIN_SW1) == LOW);
+
+    if (btnPressed && !btnWasPressed) {
+      // 按下瞬间
+      btnPressStart = millis();
+      btnWasPressed = true;
+    }
+    if (!btnPressed && btnWasPressed) {
+      // 释放瞬间
+      btnWasPressed = false;
+      unsigned long holdMs = millis() - btnPressStart;
+      if (holdMs > DEBOUNCE_MS) {
+        if (holdMs >= 1000) {
+          // 长按: 刷新数据
+          handleButtonRefresh();
+        } else {
+          // 短按: 切换页面
+          currentPage = (currentPage == 1) ? 2 : 1;
+          refreshCurrentPage();
+          Serial.printf("[BTN] 切换到第 %d 页\n", currentPage);
+        }
+      }
     }
   }
 

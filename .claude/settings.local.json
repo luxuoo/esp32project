@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git config *)",
+      "Bash(platformio pkg *)",
+      "Bash(pio pkg *)",
+      "Bash(pio platform *)",
+      "Bash(find ~/.platformio/packages/framework-arduinoespressif32 -name \"LittleFS.h\" 2>/dev/null | head -5)",
+      "Read(//c/Users/Newland/.platformio/packages/framework-arduinoespressif32/**)",
+      "Bash(find /c/Users/Newland/.platformio -name \"LittleFS.h\" 2>/dev/null | head -10)",
+      "Read(//c/Users/Newland/.platformio/**)",
+      "Bash(rm -rf /c/Users/Newland/.platformio/packages/toolchain-xtensa-esp32/)",
+      "Bash(rm -rf /c/Users/Newland/.platformio/packages/toolchain-xtensa32/)",
+      "Bash(rm -rf /c/Users/Newland/.platformio/packages/framework-arduinoespressif32/)",
+      "Bash(pip install *)",
+      "Bash(/c/Users/Newland/.platformio/penv/Scripts/pip install *)"
+    ]
+  }
+}
