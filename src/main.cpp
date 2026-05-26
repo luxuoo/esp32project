@@ -10,7 +10,6 @@
 // ==================== 前向声明 ====================
 void startD6Blink(int times);
 void drawPage2();
-void drawRunner(int cx, int cy, int frame);
 void playBootAnimation();
 
 // ==================== 引脚与网络 ====================
@@ -290,110 +289,133 @@ void refreshCurrentPage() {
   else                  drawPage2();
 }
 
-// ==================== 走路小人绘制 ====================
-// cx, cy = 小人脚底中心坐标
-// frame  = 当前帧 (0~3 循环)
-void drawRunner(int cx, int cy, int frame) {
-  int bounce = (frame == 1 || frame == 3) ? -1 : 0;
-  cy += bounce;
+// ==================== 雷达扫描绘制 ====================
+// 雷达中心 cx, cy, 扫描角度 angle (弧度×100), 信号点
+static int radarDots[8][2];
+static bool radarDotsReady = false;
 
-  // 头
-  u8g2.drawDisc(cx, cy - 23, 3);
+void drawRadar(int cx, int cy, float angle) {
+  // 同心圆
+  u8g2.drawCircle(cx, cy, 8);
+  u8g2.drawCircle(cx, cy, 17);
+  u8g2.drawCircle(cx, cy, 25);
 
-  // 身体
-  u8g2.drawLine(cx, cy - 20, cx, cy - 8);
+  // 十字线
+  u8g2.drawLine(cx - 26, cy, cx + 26, cy);
+  u8g2.drawLine(cx, cy - 26, cx + 0, cy + 26);
 
-  // 手臂
-  switch (frame % 4) {
-    case 0:
-      u8g2.drawLine(cx, cy - 17, cx - 5, cy - 12);
-      u8g2.drawLine(cx, cy - 17, cx + 5, cy - 12);
-      break;
-    case 1:
-      u8g2.drawLine(cx, cy - 17, cx + 9, cy - 13);
-      u8g2.drawLine(cx, cy - 17, cx - 6, cy - 11);
-      break;
-    case 2:
-      u8g2.drawLine(cx, cy - 17, cx - 4, cy - 12);
-      u8g2.drawLine(cx, cy - 17, cx + 4, cy - 12);
-      break;
-    case 3:
-      u8g2.drawLine(cx, cy - 17, cx - 9, cy - 13);
-      u8g2.drawLine(cx, cy - 17, cx + 6, cy - 11);
-      break;
+  // 扫描线（亮）
+  int sx = cx + (int)(cos(angle) * 25);
+  int sy = cy - (int)(sin(angle) * 25);
+  u8g2.drawLine(cx, cy, sx, sy);
+
+  // 拖尾渐暗效果：多条短扫线
+  for (int t = 1; t <= 4; t++) {
+    float a = angle - t * 0.08;
+    int tx = cx + (int)(cos(a) * 25);
+    int ty = cy - (int)(sin(a) * 25);
+    // 奇数帧跳过实现闪烁渐暗
+    if (t == 1 || (t <= 3 && (int)(angle * 50) % (t + 1) == 0)) {
+      u8g2.drawLine(cx, cy, tx, ty);
+    }
   }
 
-  // 腿
-  switch (frame % 4) {
-    case 0:
-      u8g2.drawLine(cx, cy - 8, cx - 3, cy);
-      u8g2.drawLine(cx, cy - 8, cx + 3, cy);
-      break;
-    case 1:
-      u8g2.drawLine(cx, cy - 8, cx + 9, cy);
-      u8g2.drawLine(cx, cy - 8, cx - 6, cy - 3);
-      break;
-    case 2:
-      u8g2.drawLine(cx, cy - 8, cx - 2, cy);
-      u8g2.drawLine(cx, cy - 8, cx + 2, cy);
-      break;
-    case 3:
-      u8g2.drawLine(cx, cy - 8, cx - 9, cy);
-      u8g2.drawLine(cx, cy - 8, cx + 6, cy - 3);
-      break;
+  // 信号点（随机出现在圈上）
+  if (!radarDotsReady) {
+    radarDotsReady = true;
+    for (int i = 0; i < 8; i++) {
+      radarDots[i][0] = cx + (random(-22, 22));
+      radarDots[i][1] = cy + (random(-22, 22));
+      // 确保在圆内
+      int dx = radarDots[i][0] - cx;
+      int dy = radarDots[i][1] - cy;
+      if (dx * dx + dy * dy > 25 * 25) {
+        radarDots[i][0] = cx + dx * 7 / 10;
+        radarDots[i][1] = cy + dy * 7 / 10;
+      }
+    }
   }
-
-  // 脚
-  if (frame == 0 || frame == 2) {
-    u8g2.drawPixel(cx - 4, cy + 1);
-    u8g2.drawPixel(cx + 4, cy + 1);
+  for (int i = 0; i < 8; i++) {
+    float dotAngle = atan2(cy - radarDots[i][1], radarDots[i][0] - cx);
+    if (dotAngle < 0) dotAngle += 2 * PI;
+    float diff = angle - dotAngle;
+    if (diff < 0) diff += 2 * PI;
+    // 只有被扫到的点才亮，且随时间渐暗
+    if (diff < PI * 0.6) {
+      u8g2.drawPixel(radarDots[i][0], radarDots[i][1]);
+      if (diff < PI * 0.15) {
+        u8g2.drawPixel(radarDots[i][0] + 1, radarDots[i][1]);
+      }
+    }
   }
 }
 
 // ==================== 开机动画主函数 ====================
 void playBootAnimation() {
   unsigned long startTime = millis();
+  const int CX = 90;  // 雷达中心 x
+  const int CY = 32;  // 雷达中心 y
+  const char* title = "ENV STATION";
+  int titleLen = 11;
+  int shownChars = 0;
 
-  while (millis() - startTime < 3000) {
+  // 点阵加载文字
+  const char* loadText[] = {"BOOT", "SENS", "WIFI", "MQTT", "RDY!"};
+
+  while (millis() - startTime < 3500) {
     unsigned long elapsed = millis() - startTime;
-    int progress = map(elapsed, 0, 3000, 0, 100);
-    int frame    = (elapsed / 120) % 4;
+    float angle = ((float)(elapsed % 2000) / 2000.0) * 2 * PI;
 
     u8g2.clearBuffer();
 
-    // 标题
-    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-    u8g2.setCursor(28, 10);
-    u8g2.print("24 LuXuXu");
-    u8g2.drawHLine(0, 13, 128);
+    // ---- 左侧：逐字打出标题 ----
+    shownChars = min((int)(elapsed / 100), titleLen);
+    u8g2.setFont(u8g2_font_6x10_tf);
+    for (int i = 0; i < shownChars; i++) {
+      u8g2.setCursor(2 + i * 6, 10);
+      u8g2.print(title[i]);
+    }
+    // 闪烁光标
+    if (shownChars < titleLen && (elapsed / 200) % 2 == 0) {
+      u8g2.setCursor(2 + shownChars * 6, 10);
+      u8g2.print("_");
+    }
 
-    // 速度线
-    int dashOff = (elapsed / 40) % 10;
-    for (int i = 0; i < 3; i++) {
-      int lx = 18 - dashOff - i * 7;
-      if (lx > 2 && lx < 32) {
-        u8g2.drawHLine(lx, 24 + i * 6, 6);
+    // ---- 左侧：加载阶段文字 ----
+    int stage = min((int)(elapsed / 700), 4);
+    for (int s = 0; s <= stage && s < 5; s++) {
+      u8g2.setCursor(4, 24 + s * 10);
+      if (s < stage) {
+        // 已完成：显示 [OK]
+        u8g2.print(">");
+        u8g2.print(loadText[s]);
+        u8g2.print(" OK");
+      } else if (s == stage) {
+        // 当前阶段：闪烁
+        if ((elapsed / 150) % 2 == 0) {
+          u8g2.print(">");
+          u8g2.print(loadText[s]);
+        }
       }
     }
 
-    // 走路小人
-    drawRunner(55, 42, frame);
+    // ---- 右侧：雷达扫描 ----
+    // 分隔线
+    u8g2.drawLine(56, 0, 56, 64);
 
-    // 地面虚线（向左滚动）
-    int gndOff = (elapsed / 40) % 16;
-    for (int x = -gndOff; x < 128; x += 16) {
-      u8g2.drawHLine(x, 44, 8);
+    drawRadar(CX, CY, angle);
+
+    // ---- 底部：进度条 ----
+    int progress = map(elapsed, 0, 3500, 0, 100);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.setCursor(0, 64);
+    u8g2.print("[");
+    int blocks = progress / 5;
+    for (int i = 0; i < 20; i++) {
+      u8g2.print(i < blocks ? "#" : ".");
     }
-
-    // 进度条
-    u8g2.drawFrame(14, 49, 100, 10);
-    int barW = map(progress, 0, 100, 0, 98);
-    if (barW > 0) {
-      u8g2.drawBox(15, 50, barW, 8);
-    }
-
-    // 百分比
-    u8g2.setCursor(54, 63);
+    u8g2.print("]");
+    u8g2.setCursor(92, 64);
     u8g2.print(progress);
     u8g2.print("%");
 
@@ -406,9 +428,13 @@ void handleButtonRefresh() {
   Serial.println("[BTN] 手动刷新所有数据");
 
   u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2.setCursor(0, 30);
-  u8g2.print("正在刷新数据...");
+  u8g2.setFont(u8g2_font_5x7_tf);
+  u8g2.drawFrame(0, 0, 128, 64);
+  u8g2.drawHLine(0, 10, 128);
+  u8g2.setCursor(28, 8);
+  u8g2.print("[ REFRESH ]");
+  u8g2.setCursor(24, 34);
+  u8g2.print("Updating...");
   u8g2.sendBuffer();
 
   readSensors();
@@ -477,7 +503,7 @@ void setup() {
   u8g2.begin();
   u8g2.enableUTF8Print();
 
-  // ========== 需求9: 走路小人开机动画 3秒 ==========
+  // ========== 需求9: 雷达扫描开机动画 3.5秒 ==========
   playBootAnimation();
 
   // ========== 需求1+9: WiFi 连接 + 实时进度 ==========
@@ -490,6 +516,7 @@ void setup() {
   unsigned long lastOledUp   = 0;
   int dotAnim = 0;
 
+  const char* spinner = "|/-\\";
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastD3Toggle >= 250) {
       digitalWrite(D3, !digitalRead(D3));
@@ -500,18 +527,41 @@ void setup() {
       dotAnim = (dotAnim + 1) % 4;
       int elapsed = (millis() - wifiStart) / 1000;
       int pct = constrain((int)(millis() - wifiStart) * 100 / 30000, 0, 100);
+      int blocks = pct / 5; // 20格
 
       u8g2.clearBuffer();
-      u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-      u8g2.setCursor(0, 12);
-      u8g2.print("WiFi 连接中");
-      for (int i = 0; i < dotAnim; i++) u8g2.print(".");
-      u8g2.setCursor(0, 28);
-      u8g2.print("SSID: "); u8g2.print(ssid);
-      u8g2.drawFrame(0, 38, 128, 10);
-      u8g2.drawBox(1, 39, pct * 126 / 100, 8);
-      u8g2.setCursor(0, 60);
-      u8g2.print("耗时: "); u8g2.print(elapsed); u8g2.print("s / 30s");
+      u8g2.setFont(u8g2_font_5x7_tf);
+
+      // 边框 + 标题栏
+      u8g2.drawFrame(0, 0, 128, 64);
+      u8g2.drawHLine(0, 10, 128);
+      u8g2.setCursor(36, 8);
+      u8g2.print("[ WIFI ]");
+
+      // 旋转指示器 + SSID
+      u8g2.setCursor(4, 21);
+      u8g2.print(spinner[dotAnim]);
+      u8g2.print(" Connecting...");
+      u8g2.setCursor(4, 31);
+      u8g2.print("SSID: ");
+      u8g2.print(ssid);
+
+      // ASCII 进度条
+      u8g2.setCursor(4, 43);
+      u8g2.print("[");
+      for (int i = 0; i < 20; i++) {
+        u8g2.print(i < blocks ? "#" : ".");
+      }
+      u8g2.print("]");
+
+      // 底部信息
+      u8g2.setCursor(4, 53);
+      u8g2.print(elapsed);
+      u8g2.print("s / 30s");
+      u8g2.setCursor(80, 53);
+      u8g2.print(pct);
+      u8g2.print("%");
+
       u8g2.sendBuffer();
     }
     if (millis() - wifiStart > 30000) {
@@ -527,10 +577,37 @@ void setup() {
     Serial.printf("[WiFi] IP=%s\n", WiFi.localIP().toString().c_str());
 
     u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-    u8g2.setCursor(0, 12); u8g2.print("WiFi 已连接!");
-    u8g2.setCursor(0, 30); u8g2.print("IP: "); u8g2.print(WiFi.localIP().toString());
-    u8g2.setCursor(0, 48); u8g2.print("信号: "); u8g2.print(WiFi.RSSI()); u8g2.print(" dBm");
+    u8g2.setFont(u8g2_font_5x7_tf);
+
+    u8g2.drawFrame(0, 0, 128, 64);
+    u8g2.drawHLine(0, 10, 128);
+    u8g2.setCursor(30, 8);
+    u8g2.print("[ CONNECTED ]");
+
+    u8g2.setCursor(4, 22);
+    u8g2.print("WiFi  OK");
+    // 信号强度图标
+    int rssi = WiFi.RSSI();
+    int bars = (rssi > -50) ? 4 : (rssi > -60) ? 3 : (rssi > -70) ? 2 : 1;
+    for (int i = 0; i < 4; i++) {
+      int bh = 2 + i * 2;
+      if (i < bars) u8g2.drawBox(108 + i * 5, 15 - bh, 3, bh);
+      else          u8g2.drawFrame(108 + i * 5, 15 - bh, 3, bh);
+    }
+
+    u8g2.setCursor(4, 34);
+    u8g2.print("IP: ");
+    u8g2.print(WiFi.localIP().toString());
+
+    u8g2.setCursor(4, 46);
+    u8g2.print("RSSI: ");
+    u8g2.print(rssi);
+    u8g2.print(" dBm");
+
+    u8g2.setCursor(4, 58);
+    u8g2.print("CH: ");
+    u8g2.print(WiFi.channel());
+
     u8g2.sendBuffer();
     delay(1500);
   }
@@ -553,18 +630,38 @@ void setup() {
       lastMqttOled = millis();
       mqttDotAnim = (mqttDotAnim + 1) % 4;
       int pct = mqttRetry * 100 / 10;
+      int blocks = pct / 5;
 
       u8g2.clearBuffer();
-      u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-      u8g2.setCursor(0, 12);
-      u8g2.print("MQTT 连接中");
-      for (int i = 0; i < mqttDotAnim; i++) u8g2.print(".");
-      u8g2.setCursor(0, 28);
-      u8g2.print("服务器: "); u8g2.print(mqtt_server);
-      u8g2.setCursor(0, 44);
-      u8g2.print("重试: "); u8g2.print(mqttRetry); u8g2.print("/10");
-      u8g2.drawFrame(0, 52, 128, 10);
-      u8g2.drawBox(1, 53, pct * 126 / 100, 8);
+      u8g2.setFont(u8g2_font_5x7_tf);
+
+      u8g2.drawFrame(0, 0, 128, 64);
+      u8g2.drawHLine(0, 10, 128);
+      u8g2.setCursor(34, 8);
+      u8g2.print("[ MQTT ]");
+
+      u8g2.setCursor(4, 21);
+      u8g2.print("|/-\\"[mqttDotAnim]);
+      u8g2.print(" Connecting...");
+      u8g2.setCursor(4, 31);
+      u8g2.print("Host: ");
+      u8g2.print(mqtt_server);
+
+      u8g2.setCursor(4, 43);
+      u8g2.print("[");
+      for (int i = 0; i < 20; i++) {
+        u8g2.print(i < blocks ? "#" : ".");
+      }
+      u8g2.print("]");
+
+      u8g2.setCursor(4, 53);
+      u8g2.print("Retry ");
+      u8g2.print(mqttRetry);
+      u8g2.print("/10");
+      u8g2.setCursor(80, 53);
+      u8g2.print(pct);
+      u8g2.print("%");
+
       u8g2.sendBuffer();
     }
 
@@ -585,17 +682,35 @@ void setup() {
 
   if (client.connected()) {
     u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-    u8g2.setCursor(0, 20); u8g2.print("MQTT 已连接!");
-    u8g2.setCursor(0, 40); u8g2.print("主题已订阅");
+    u8g2.setFont(u8g2_font_5x7_tf);
+
+    u8g2.drawFrame(0, 0, 128, 64);
+    u8g2.drawHLine(0, 10, 128);
+    u8g2.setCursor(30, 8);
+    u8g2.print("[ CONNECTED ]");
+
+    u8g2.setCursor(4, 24);
+    u8g2.print("MQTT  OK");
+    u8g2.setCursor(4, 38);
+    u8g2.print("> sensor  topic");
+    u8g2.setCursor(4, 48);
+    u8g2.print("> weather topic");
+    u8g2.setCursor(4, 58);
+    u8g2.print("> led     topic");
+
     u8g2.sendBuffer();
     delay(1000);
   }
 
   // 首次获取天气
   u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2.setCursor(0, 30); u8g2.print("获取天气中...");
+  u8g2.setFont(u8g2_font_5x7_tf);
+  u8g2.drawFrame(0, 0, 128, 64);
+  u8g2.drawHLine(0, 10, 128);
+  u8g2.setCursor(28, 8);
+  u8g2.print("[ WEATHER ]");
+  u8g2.setCursor(30, 34);
+  u8g2.print("Fetching...");
   u8g2.sendBuffer();
   fetchWeatherFromAPI();
   lastWeatherFetch = millis();
