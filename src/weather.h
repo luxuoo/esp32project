@@ -81,7 +81,7 @@ bool fetchWeatherFromAPI() {
     resp["code"]    = api_code;
     char buf[256];
     serializeJson(resp, buf);
-    client.publish("esp32/resp/weather", buf);
+    client.publish(TOPIC_RESP_WEATHER, buf);
   }
 
   if (currentPage == 2) drawPage2();

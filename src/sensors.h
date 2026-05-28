@@ -12,11 +12,11 @@ void updateD6Blink() {
   if (!d6_blinking) return;
   if (millis() - lastD6BlinkTime >= 200) {
     d6_blink_state = !d6_blink_state;
-    digitalWrite(D6, d6_blink_state ? HIGH : LOW);
+    digitalWrite(PIN_D6, d6_blink_state ? HIGH : LOW);
     lastD6BlinkTime = millis();
     if (--d6_blink_remaining <= 0) {
       d6_blinking = false;
-      if (!sensor_error) digitalWrite(D6, LOW);
+      if (!sensor_error) digitalWrite(PIN_D6, LOW);
     }
   }
 }
@@ -25,16 +25,16 @@ void updateD6Blink() {
 void readSensors() {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
-  int raw = analogRead(GM31_PIN);
+  int raw = analogRead(PIN_GM31);
   light_level = map(raw, 0, 4095, 0, 100);
 
   if (isnan(t) || isnan(h)) {
     sensor_error = true;
-    digitalWrite(D6, HIGH);
+    digitalWrite(PIN_D6, HIGH);
   } else {
     temp = t; hum = h;
     sensor_error = false;
-    digitalWrite(D6, LOW);
+    digitalWrite(PIN_D6, LOW);
   }
 }
 
@@ -47,7 +47,7 @@ void publishSensorData() {
   doc["light"] = light_level;
   char buf[200];
   serializeJson(doc, buf);
-  client.publish("esp32/resp/sensor", buf);
+  client.publish(TOPIC_RESP_SENSOR, buf);
 }
 
 // ==================== I2C 扫描 ====================

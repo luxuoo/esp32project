@@ -230,7 +230,7 @@ void handleButtonRefresh() {
   refreshCurrentPage();
 
   if (client.connected()) {
-    client.publish("esp32/req/manual", "手动刷新成功");
+    client.publish(TOPIC_REQ_MANUAL, "手动刷新成功");
     Serial.println("[MQTT] 发布: 手动刷新成功");
   }
 }

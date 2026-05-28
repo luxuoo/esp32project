@@ -1,100 +1,6 @@
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <PubSubClient.h>
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
-#include <U8g2lib.h>
-#include <DHT.h>
-#include <Wire.h>
-
-// ==================== 前向声明（跨模块函数依赖）====================
-void startD6Blink(int times);
-void drawPage2();
-void playBootAnimation();
-void drawPage1();
-void refreshCurrentPage();
-void readSensors();
-void publishSensorData();
-bool fetchWeatherFromAPI();
-
-// ==================== 引脚与网络 ====================
-const char* ssid       = "旭的iPhone Air";
-const char* password   = "123456789";
-const char* mqtt_server = "123.207.45.73";
-const int   mqtt_port   = 1883;
-const char* mqtt_user   = "admin";
-const char* mqtt_pass   = "Lu20050910";
-
-const int D3  = 14;
-const int D4  = 27;
-const int D5  = 26;
-const int D6  = 33;
-const int SW1 = 32;
-
-const int OLED_SDA = 21;
-const int OLED_SCL = 22;
-
-#define DHTPIN  4
-#define DHTTYPE DHT11
-DHT dht(DHTPIN, DHTTYPE);
-const int GM31_PIN = 35;
-
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(
-  U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA
-);
-
-WiFiClient espClient;
-PubSubClient client(espClient);
-WiFiClientSecure secureClient;
-
-const char* WEATHER_API_URL =
-  "https://api.open-meteo.com/v1/forecast"
-  "?latitude=39.9042&longitude=116.4074"
-  "&current_weather=true&timezone=Asia/Shanghai";
-
-// ==================== 全局状态 ====================
-int currentPage   = 1;
-int d5_brightness = 0;
-float temp = 0.0, hum = 0.0;
-int light_level   = 0;
-bool sensor_error = false;
-
-String weather_city         = "北京";
-String weather_text         = "--";
-String weather_temp_str     = "--";
-bool   weather_available    = false;
-bool   weather_fetch_failed = false;
-
-unsigned long lastWeatherFetch = 0;
-const unsigned long WEATHER_INTERVAL = 600000;
-
-volatile bool flag_button_refresh = false;
-volatile bool flag_timer_read     = false;
-hw_timer_t* timer = NULL;
-
-unsigned long lastMqttReconnectAttempt = 0;
-const unsigned long MQTT_RECONNECT_INTERVAL = 5000;
-
-bool d6_blinking        = false;
-int  d6_blink_remaining = 0;
-bool d6_blink_state     = false;
-unsigned long lastD6BlinkTime = 0;
-
-unsigned long lastButtonPress = 0;
-const unsigned long DEBOUNCE_MS = 200;
-
-bool wifi_was_connected = false;
-bool mqtt_was_connected = false;
-
-// ==================== 中断 ====================
-void IRAM_ATTR buttonISR() {
-  flag_button_refresh = true;
-}
-void IRAM_ATTR timerISR() {
-  flag_timer_read = true;
-}
-
 // ==================== 模块包含 ====================
+#include "config.h"
+#include "globals.h"
 #include "sensors.h"
 #include "weather.h"
 #include "display.h"
@@ -105,14 +11,14 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n========== ESP32 启动 ==========");
 
-  pinMode(D3, OUTPUT); pinMode(D4, OUTPUT); pinMode(D6, OUTPUT);
-  pinMode(SW1, INPUT_PULLUP);
+  pinMode(PIN_D3, OUTPUT); pinMode(PIN_D4, OUTPUT); pinMode(PIN_D6, OUTPUT);
+  pinMode(PIN_SW1, INPUT_PULLUP);
 
-  ledcSetup(2, 5000, 8);
-  ledcAttachPin(D5, 2);
-  ledcWrite(2, 0);
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RES);
+  ledcAttachPin(PIN_D5, PWM_CHANNEL);
+  ledcWrite(PWM_CHANNEL, 0);
 
-  attachInterrupt(digitalPinToInterrupt(SW1), buttonISR, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_SW1), buttonISR, FALLING);
   timer = timerBegin(2, 80, true);
   timerAttachInterrupt(timer, &timerISR, true);
   timerAlarmWrite(timer, 5000000, true);
@@ -120,7 +26,7 @@ void setup() {
 
   dht.begin();
 
-  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
   Wire.setClock(100000);
   scanI2C();
   u8g2.setBusClock(100000);
@@ -133,7 +39,7 @@ void setup() {
   // ========== WiFi 连接 + 实时进度 ==========
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   unsigned long wifiStart    = millis();
   unsigned long lastD3Toggle = 0;
@@ -142,7 +48,7 @@ void setup() {
 
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastD3Toggle >= 250) {
-      digitalWrite(D3, !digitalRead(D3));
+      digitalWrite(PIN_D3, !digitalRead(PIN_D3));
       lastD3Toggle = millis();
     }
     if (millis() - lastOledUp >= 500) {
@@ -176,7 +82,7 @@ void setup() {
       u8g2.setCursor(56, 12); u8g2.print("WiFi");
       u8g2.setCursor(56, 22); u8g2.print("Connecting");
       for (int d = 0; d < (dotAnim % 4); d++) u8g2.print(".");
-      u8g2.setCursor(56, 34); u8g2.print(ssid);
+      u8g2.setCursor(56, 34); u8g2.print(WIFI_SSID);
 
       u8g2.setCursor(4, 50);
       for (int i = 0; i < 24; i++) {
@@ -196,7 +102,7 @@ void setup() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    digitalWrite(D3, HIGH);
+    digitalWrite(PIN_D3, HIGH);
     wifi_was_connected = true;
     Serial.printf("[WiFi] IP=%s\n", WiFi.localIP().toString().c_str());
 
@@ -225,7 +131,7 @@ void setup() {
   }
 
   // ========== MQTT 连接 + 实时进度 ==========
-  client.setServer(mqtt_server, mqtt_port);
+  client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(mqttCallback);
 
   unsigned long lastD4Toggle = 0;
@@ -235,7 +141,7 @@ void setup() {
 
   while (!client.connected() && mqttRetry < 10) {
     if (millis() - lastD4Toggle >= 150) {
-      digitalWrite(D4, !digitalRead(D4));
+      digitalWrite(PIN_D4, !digitalRead(PIN_D4));
       lastD4Toggle = millis();
     }
     if (millis() - lastMqttOled >= 500) {
@@ -262,7 +168,7 @@ void setup() {
       u8g2.setCursor(50, 12); u8g2.print("MQTT");
       u8g2.setCursor(50, 24); u8g2.print("Connecting");
       for (int d = 0; d < (mqttDotAnim % 4); d++) u8g2.print(".");
-      u8g2.setCursor(50, 36); u8g2.print(mqtt_server);
+      u8g2.setCursor(50, 36); u8g2.print(MQTT_SERVER);
 
       u8g2.setCursor(4, 50);
       for (int i = 0; i < 24; i++) {
@@ -276,12 +182,12 @@ void setup() {
     }
 
     String clientId = "ESP32Client-" + String(random(0xffff), HEX);
-    if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
-      digitalWrite(D4, HIGH);
+    if (client.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
+      digitalWrite(PIN_D4, HIGH);
       mqtt_was_connected = true;
-      client.subscribe("esp32/req/sensor");
-      client.subscribe("esp32/req/weather");
-      client.subscribe("esp32/ctrl/led");
+      client.subscribe(TOPIC_REQ_SENSOR);
+      client.subscribe(TOPIC_REQ_WEATHER);
+      client.subscribe(TOPIC_CTRL_LED);
       Serial.println("[MQTT] 已连接");
     } else {
       mqttRetry++;
@@ -337,18 +243,18 @@ void loop() {
 
   if (wifiOK) {
     if (!wifi_was_connected) {
-      digitalWrite(D3, HIGH);
+      digitalWrite(PIN_D3, HIGH);
       wifi_was_connected = true;
       Serial.println("[WiFi] 重连成功");
     }
   } else {
     if (wifi_was_connected) {
-      digitalWrite(D3, LOW);
+      digitalWrite(PIN_D3, LOW);
       wifi_was_connected = false;
       Serial.println("[WiFi] 断开");
     }
     if (millis() - lastWifiCheck > 250) {
-      digitalWrite(D3, !digitalRead(D3));
+      digitalWrite(PIN_D3, !digitalRead(PIN_D3));
       lastWifiCheck = millis();
     }
   }
@@ -357,32 +263,32 @@ void loop() {
 
   if (mqttOK) {
     if (!mqtt_was_connected) {
-      digitalWrite(D4, HIGH);
+      digitalWrite(PIN_D4, HIGH);
       mqtt_was_connected = true;
-      client.subscribe("esp32/req/sensor");
-      client.subscribe("esp32/req/weather");
-      client.subscribe("esp32/ctrl/led");
+      client.subscribe(TOPIC_REQ_SENSOR);
+      client.subscribe(TOPIC_REQ_WEATHER);
+      client.subscribe(TOPIC_CTRL_LED);
       Serial.println("[MQTT] 重连成功");
     }
     client.loop();
   } else {
     if (mqtt_was_connected) {
-      digitalWrite(D4, LOW);
+      digitalWrite(PIN_D4, LOW);
       mqtt_was_connected = false;
       Serial.println("[MQTT] 断开");
     }
     if (wifiOK) {
       if (millis() - lastMqttCheck > 150) {
-        digitalWrite(D4, !digitalRead(D4));
+        digitalWrite(PIN_D4, !digitalRead(PIN_D4));
         lastMqttCheck = millis();
       }
       if (millis() - lastMqttReconnectAttempt > MQTT_RECONNECT_INTERVAL) {
         lastMqttReconnectAttempt = millis();
         String clientId = "ESP32Client-" + String(random(0xffff), HEX);
-        client.connect(clientId.c_str(), mqtt_user, mqtt_pass);
+        client.connect(clientId.c_str(), MQTT_USER, MQTT_PASS);
       }
     } else {
-      digitalWrite(D4, LOW);
+      digitalWrite(PIN_D4, LOW);
     }
   }
 

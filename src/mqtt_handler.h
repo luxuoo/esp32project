@@ -7,13 +7,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
   Serial.printf("[MQTT] %s -> %s\n", topic, msg.c_str());
 
-  if (topicStr == "esp32/req/sensor") {
+  if (topicStr == TOPIC_REQ_SENSOR) {
     readSensors();
     currentPage = 1;
     drawPage1();
     publishSensorData();
   }
-  else if (topicStr == "esp32/req/weather") {
+  else if (topicStr == TOPIC_REQ_WEATHER) {
     String requestedCity = msg;
     if (requestedCity.length() == 0) requestedCity = "北京";
     Serial.printf("[Weather] 请求城市: %s\n", requestedCity.c_str());
@@ -21,10 +21,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     drawPage2();
     fetchWeatherFromAPI();
   }
-  else if (topicStr == "esp32/ctrl/led") {
-    if (msg == "LED_ON")             { ledcWrite(2, 255); d5_brightness = 100; }
-    else if (msg == "LED_BRIGHT_50") { ledcWrite(2, 127); d5_brightness = 50;  }
-    else if (msg == "LED_OFF")       { ledcWrite(2, 0);   d5_brightness = 0;   }
+  else if (topicStr == TOPIC_CTRL_LED) {
+    if (msg == "LED_ON")             { ledcWrite(PWM_CHANNEL, 255); d5_brightness = 100; }
+    else if (msg == "LED_BRIGHT_50") { ledcWrite(PWM_CHANNEL, 127); d5_brightness = 50;  }
+    else if (msg == "LED_OFF")       { ledcWrite(PWM_CHANNEL, 0);   d5_brightness = 0;   }
     refreshCurrentPage();
   }
 }
